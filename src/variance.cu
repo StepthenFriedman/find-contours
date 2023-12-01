@@ -2,7 +2,9 @@
 #include "device_launch_parameters.h"
 #include <stdlib.h>
 #include <stdio.h>
-#include "nvcuvid.h"
+#include "lodepng.h"
+#include "lodepng.cpp"
+//#include "nvcuvid.h"
 //#include <opencv2/core.hpp>
 //#include <opencv2/highgui.hpp>
 
@@ -23,8 +25,38 @@ __global__ void VarKernal(int *opt, const int *ipt, const unsigned int knl_size,
     }
 }
 
-int main()
-{
+int dbg2(){
+    int i,j;
+    std::vector<unsigned char> in_image;
+    unsigned int ipt_wid,ipt_hei,knl_size=5;
+    // Load the data
+    lodepng::decode(in_image, ipt_wid, ipt_hei, "../resource/capybara.jpg");
+
+    const unsigned int opt_wid=ipt_wid-knl_size+1,opt_hei=ipt_hei-knl_size+1;
+
+    int* input_image = new int[(in_image.size()*3)/4];
+    int* output_image = new int[(in_image.size()*3)/4];
+    int where = 0;
+    for(i = 0; i < in_image.size(); ++i) {
+       if((i+1) % 4 != 0) {
+           input_image[where] = in_image.at(i);
+           output_image[where] = 255;
+           where++;
+       }
+    }
+    for (i=0;i<ipt_hei;i++) {for (j=0;j<ipt_wid;j++) printf("%d ",input_image[i*opt_wid+j]);putchar('\n');}
+    //cudaError_t cudaStatus = getVariance(input_image,output_image,knl_size,ipt_wid,ipt_hei);
+    std::vector<unsigned char> out_image;
+    for(i = 0; i < in_image.size(); ++i) {
+        out_image.push_back(output_image[i]);
+        if((i+1)%3== 0) {
+            out_image.push_back(255);
+        }
+    }
+    return lodepng::encode("../resource/result.png", out_image, opt_wid, opt_hei);
+}
+
+int dbg1(){
     const unsigned int ipt_wid=5,ipt_hei=5,knl_size=3;
     unsigned int i,j;
     const int ipt[ipt_hei][ipt_wid]={
@@ -43,12 +75,16 @@ int main()
 
     for (i=0;i<ipt_hei-knl_size+1;i++) {for (j=0;j<ipt_wid-knl_size+1;j++) printf("%d ",opt[i][j]);putchar('\n');}
 
-    cudaStatus = cudaDeviceReset();
+    return 0;
+}
+
+int main(){
+    dbg2();
+    cudaError_t cudaStatus = cudaDeviceReset();
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaDeviceReset failed!");
         return 1;
     }
-
     return 0;
 }
 
