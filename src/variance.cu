@@ -10,7 +10,7 @@
 
 cudaError_t getVariance(int *opt, const int *ipt, const unsigned int knl_size, const unsigned int ipt_wid, const unsigned int ipt_hei);
 
-__global__ void VarKernal(int *opt, const int *ipt, const unsigned int knl_size, const unsigned int ipt_wid, const unsigned int ipt_hei)
+__global__ void varKernal(int *opt, const int *ipt, const unsigned int knl_size, const unsigned int ipt_wid, const unsigned int ipt_hei)
 {
     unsigned int x = threadIdx.x + blockIdx.x * blockDim.x, y = threadIdx.y + blockIdx.y * blockDim.y, i, j;
     if (x<(ipt_wid-knl_size+1)&&y<(ipt_hei-knl_size+1)){
@@ -25,35 +25,90 @@ __global__ void VarKernal(int *opt, const int *ipt, const unsigned int knl_size,
     }
 }
 
-int dbg2(){
-    int i,j;
-    std::vector<unsigned char> in_image;
-    unsigned int ipt_wid,ipt_hei,knl_size=5;
-    // Load the data
-    lodepng::decode(in_image, ipt_wid, ipt_hei, "../resource/capybara.jpg");
+__global__ void varKernal3D(int *opt, const int *ipt, const unsigned int knl_size, const unsigned int ipt_wid, const unsigned int ipt_hei)
+{
+    unsigned int x = threadIdx.x + blockIdx.x * blockDim.x, y = threadIdx.y + blockIdx.y * blockDim.y, i,j,k;
+    const unsigned int opt_wid=ipt_wid-knl_size+1,opt_hei=ipt_hei-knl_size+1;
+    double sum=0.,temp=0.,avg=0.;
+    if (x<(opt_wid)&&y<(opt_hei)) {
+        for (k=0;k<3;k++) {
+            avg=0.;
+            for (i=0;i<knl_size;i++) for (j=0;j<knl_size;j++) avg+=ipt[((y+i)*ipt_wid+(x+j))*3+k];
+            avg/=(double)(knl_size*knl_size);
+            for (i=0;i<knl_size;i++) for (j=0;j<knl_size;j++) temp=avg-ipt[((y+i)*ipt_wid+(x+j))*3+k],sum+=temp*temp;
+            opt[(y*opt_wid+x)*3+k]=sum;
+        }
+        sum/=(double)(knl_size*knl_size)*3;
+        opt[(y*opt_wid+x)*3]=opt[(y*opt_wid+x)*3+1]=opt[(y*opt_wid+x)*3+2]=sum;
+    }
+}
 
+__global__ void poolingKernal(int *opt, const int *ipt, const unsigned int knl_size, const unsigned int ipt_wid, const unsigned int ipt_hei)
+{
+    unsigned int x = threadIdx.x + blockIdx.x * blockDim.x, y = threadIdx.y + blockIdx.y * blockDim.y, i,j,k;
+    const unsigned int opt_wid=ipt_wid-knl_size+1,opt_hei=ipt_hei-knl_size+1;
+    double sum=0.,temp=0.,avg=0.;
+    if (x<(opt_wid)&&y<(opt_hei)) for (k=0;k<3;k++) {
+        avg=0.;
+        for (i=0;i<knl_size;i++) for (j=0;j<knl_size;j++) avg+=ipt[((y+i)*ipt_wid+(x+j))*3+k];
+        avg/=(double)(knl_size*knl_size);
+        opt[(y*opt_wid+x)*3+k]=avg;
+    }
+}
+
+int dbg2(){
+    int i,j,k;
+    std::vector<unsigned char> in_image;
+    unsigned int ipt_wid,ipt_hei,knl_size=3;
+    char error=lodepng::decode(in_image, ipt_wid, ipt_hei, "../resource/Lenna.png",LCT_RGBA);
     const unsigned int opt_wid=ipt_wid-knl_size+1,opt_hei=ipt_hei-knl_size+1;
 
-    int* input_image = new int[(in_image.size()*3)/4];
-    int* output_image = new int[(in_image.size()*3)/4];
-    int where = 0;
-    for(i = 0; i < in_image.size(); ++i) {
-       if((i+1) % 4 != 0) {
-           input_image[where] = in_image.at(i);
-           output_image[where] = 255;
-           where++;
-       }
+
+    printf("size:%lu wid:%u hei:%u\n",in_image.size(),ipt_wid,ipt_hei);
+    int* input_image = new int[ipt_wid*ipt_hei*3];
+    int* output_image = new int[ipt_wid*ipt_hei*3];
+    for (i=0;i<ipt_hei;i++) for (j=0;j<ipt_wid;j++) for (k=0;k<3;k++){
+        input_image[(i*ipt_wid+j)*3+k]=in_image[(i*ipt_wid+j)*4+k];
     }
-    for (i=0;i<ipt_hei;i++) {for (j=0;j<ipt_wid;j++) printf("%d ",input_image[i*opt_wid+j]);putchar('\n');}
-    //cudaError_t cudaStatus = getVariance(input_image,output_image,knl_size,ipt_wid,ipt_hei);
+    printf("%s\n",lodepng_error_text(error));
+
+    cudaError_t cudaStatus = getVariance(output_image,input_image,knl_size,ipt_wid,ipt_hei);
     std::vector<unsigned char> out_image;
-    for(i = 0; i < in_image.size(); ++i) {
-        out_image.push_back(output_image[i]);
-        if((i+1)%3== 0) {
+    
+    for (i=0;i<opt_hei;i++) for (j=0;j<opt_wid;j++) {
+        for (k=0;k<3;k++){
+            out_image.push_back(output_image[(i*opt_wid+j)*3+k]);
+        }
+        out_image.push_back(255);
+    }
+    printf("ok!\n");
+    error= lodepng::encode("../resource/result.png", out_image, opt_wid, opt_hei);
+    printf("%s\n",lodepng_error_text(error));
+    return 0;
+}
+//rgb
+int dbg3(){
+    int i,j,k;
+    const unsigned int opt_wid=512,opt_hei=512;
+
+    std::vector<unsigned char> out_image;
+    for (i=0;i<opt_hei;i++) for (j=0;j<opt_wid;j++) {
+        if (i<100&&j<100){
+            out_image.push_back(100);
+            out_image.push_back(0);
+            out_image.push_back(0);
+            out_image.push_back(255);
+        }else{
+            out_image.push_back(0);
+            out_image.push_back(0);
+            out_image.push_back(100);
             out_image.push_back(255);
         }
     }
-    return lodepng::encode("../resource/result.png", out_image, opt_wid, opt_hei);
+    printf("ok!\n");
+    char error= lodepng::encode("../resource/result.png", out_image, opt_wid, opt_hei);
+    printf("%s\n",lodepng_error_text(error));
+    return 0;
 }
 
 int dbg1(){
@@ -95,6 +150,7 @@ cudaError_t getVariance(int *opt, const int *ipt, const unsigned int knl_size, c
     cudaError_t cudaStatus;
     dim3 blocks((opt_wid+31)/32,(opt_hei+31)/32);
     dim3 threadsPerBlock(32,32);
+    printf("ipt:(%d,%d)->%d opt:(%d,%d)->%d\n",ipt_wid,ipt_hei,ipt_wid*ipt_hei*3,opt_wid,opt_hei,opt_wid*opt_hei*3);
 
     cudaStatus = cudaSetDevice(0);
     if (cudaStatus != cudaSuccess) {
@@ -102,29 +158,29 @@ cudaError_t getVariance(int *opt, const int *ipt, const unsigned int knl_size, c
         goto Error;
     }
  
-    cudaStatus = cudaMalloc((void**)&dev_opt, opt_wid*opt_hei * sizeof(int));
+    cudaStatus = cudaMalloc((void**)&dev_opt, opt_wid*opt_hei*3 * sizeof(int));
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaMalloc failed!");
         goto Error;
     }
 
-    cudaStatus = cudaMalloc((void**)&dev_ipt, ipt_wid*ipt_hei * sizeof(int));
+    cudaStatus = cudaMalloc((void**)&dev_ipt, ipt_wid*ipt_hei*3 * sizeof(int));
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaMalloc failed!");
         goto Error;
     }
 
-    cudaStatus = cudaMemcpy(dev_ipt, ipt, ipt_wid*ipt_hei * sizeof(int), cudaMemcpyHostToDevice);
+    cudaStatus = cudaMemcpy(dev_ipt, ipt, ipt_wid*ipt_hei*3 * sizeof(int), cudaMemcpyHostToDevice);
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaMemcpy failed!");
         goto Error;
     }
 
-    VarKernal<<< blocks, threadsPerBlock >>>(dev_opt, dev_ipt, knl_size, ipt_wid, ipt_hei);
+    varKernal3D<<< blocks, threadsPerBlock >>>(dev_opt, dev_ipt, knl_size, ipt_wid, ipt_hei);
 
     cudaStatus = cudaGetLastError();
     if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "VarKernal launch failed: %s\n", cudaGetErrorString(cudaStatus));
+        fprintf(stderr, "varKernal launch failed: %s\n", cudaGetErrorString(cudaStatus));
         goto Error;
     }
     
@@ -134,7 +190,7 @@ cudaError_t getVariance(int *opt, const int *ipt, const unsigned int knl_size, c
         goto Error;
     }
 
-    cudaStatus = cudaMemcpy(opt, dev_opt, opt_wid*opt_hei * sizeof(int), cudaMemcpyDeviceToHost);
+    cudaStatus = cudaMemcpy(opt, dev_opt, opt_wid*opt_hei*3 * sizeof(int), cudaMemcpyDeviceToHost);
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaMemcpy failed!");
         goto Error;

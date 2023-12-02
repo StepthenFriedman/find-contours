@@ -6,7 +6,7 @@ using namespace std;
 
 int main() {
   // Open the image file.
-  ifstream image("../resource/Lenna.png");
+  ifstream image("image.png");
 
   // Check if the file opened successfully.
   if (!image.is_open()) {
