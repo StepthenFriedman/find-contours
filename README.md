@@ -7,6 +7,6 @@ the most used algorithms are Sobel, Laplacian and Canny.
 
 I wonder if there exists a better approach.
 
-A candidate seems more sensitive to edges than Sobel, which is to get the variance within the kernel instead of multiply.
+A candidate seems more sensitive to edges than Sobel, which is to get the variance within the kernel instead of multiplication.
 
 the result will be shown in demo, we'll see.
