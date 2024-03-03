@@ -3,7 +3,7 @@
 #include "dbg.cuh"
 
 int main(){
-    dbg::find_variance();
+    dbg::find_contours();
     cudaError_t cudaStatus = cudaDeviceReset();
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaDeviceReset failed!");

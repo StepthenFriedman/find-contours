@@ -1,10 +1,14 @@
 #pragma once
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
+#include <cstdio>
 #include "math.h"
 
 namespace kernel{
     #define pos(x,y,wid) ((y)*(wid)+(x))
+    #define max(x,y) ((x)>(y)?(x):(y))
+    #define min(x,y) ((x)<(y)?(x):(y))
+    #define abs(x) ((x)>0?(x):(-(x)))
     #define abssub(x,y) (((x)>(y))?((x)-(y)):((y)-(x)))
     /*
     The horizontal axis is x and the vertical axis is y (0<=x<ipt_wid, 0<=y<ipt_hei).
@@ -27,52 +31,75 @@ namespace kernel{
         unsigned int x = threadIdx.x + blockIdx.x * blockDim.x, y = threadIdx.y + blockIdx.y * blockDim.y;
         if (x<(ipt_wid)&&y<(ipt_hei)){
             unsigned int pos=pos(x,y,ipt_wid);
-            opt[pos*3]=opt[pos*3+1]=opt[pos*3+2] = ipt[pos];
+            if (ipt[pos]<0.) opt[pos*3]=opt[pos*3+1]=opt[pos*3+2] = 0;
+            else opt[pos*3]=opt[pos*3+1]=opt[pos*3+2] = min(255,(int)ipt[pos]);
+        }
+    }
+    __global__ void find_variance(double *opt, const double *ipt, const unsigned int knl_size, const unsigned int wid, const unsigned int hei)
+    {
+        int x = threadIdx.x + blockIdx.x * blockDim.x, y = threadIdx.y + blockIdx.y * blockDim.y, i,j;
+
+        int anchor=knl_size/2, lx=max(0,x-anchor),rx=min(wid,x+anchor+1),ly=max(0,y-anchor),ry=min(hei,y+anchor+1);
+
+        double all_points=(double)((rx-lx)*(ry-ly)),mse=0.,tempv=0.,avg=0.;
+
+        for (i=lx;i<rx;i++) for (j=ly;j<ry;j++) avg+=ipt[pos(i,j,wid)];
+
+        avg/=all_points;
+
+        for (i=lx;i<rx;i++) for (j=ly;j<ry;j++) tempv=avg-ipt[pos(i,j,wid)],mse+=tempv*tempv;
+
+        mse/=all_points;
+
+        mse=sqrt(mse);
+        
+        __syncthreads();
+
+        if (x<wid && y<hei) opt[pos(x,y,wid)]=mse;
+
+    }
+
+    __global__ void adaptive_threshold(double *opt, const double *ipt, const unsigned int knl_size, const unsigned int wid, const unsigned int hei)
+    {
+        int x = threadIdx.x + blockIdx.x * blockDim.x, y = threadIdx.y + blockIdx.y * blockDim.y, i,j;
+
+        if (x<wid && y<hei){
+            int anchor=knl_size/2, lx=max(0,x-anchor),rx=min(wid,x+anchor+1),ly=max(0,y-anchor),ry=min(hei,y+anchor+1);
+
+            double avg=0.;
+
+            for (i=lx;i<rx;i++) for (j=ly;j<ry;j++) avg+=ipt[pos(i,j,wid)];
+
+            avg/=(double)((rx-lx)*(ry-ly));
+
+            double temp=(ipt[pos(x,y,wid)]<avg-1) ?0:ipt[pos(x,y,wid)];
+
+            __syncthreads();
+
+            opt[pos(x,y,wid)]=temp;
         }
     }
 
-    __global__ void find_variance(double *opt, const double *ipt, const unsigned int knl_size, const unsigned int ipt_wid, const unsigned int ipt_hei)
+    __global__ void multiply(double *opt, const double *ipt, const double *kernel, const unsigned int knl_size, const unsigned int wid, const unsigned int hei)
     {
-        unsigned int x = threadIdx.x + blockIdx.x * blockDim.x, y = threadIdx.y + blockIdx.y * blockDim.y, i,j;
-        const unsigned int opt_wid=ipt_wid-knl_size+1,opt_hei=ipt_hei-knl_size+1;
-        if (x<(opt_wid)&&y<(opt_hei)) {
+        int x = threadIdx.x + blockIdx.x * blockDim.x, y = threadIdx.y + blockIdx.y * blockDim.y, i,j;
 
-            double mse=0.,temp=0.,avg=0.;
+        if (x<wid && y<hei){
+            int anchor=knl_size/2, lx=max(0,x-anchor),rx=min(wid,x+anchor+1),ly=max(0,y-anchor),ry=min(hei,y+anchor+1);
+            double res=0;
 
-            for (i=0;i<knl_size;i++) for (j=0;j<knl_size;j++) avg+=ipt[pos(x+i,y+j,ipt_wid)];
+            for (i=lx;i<rx;i++) for (j=ly;j<ry;j++) res+=ipt[pos(i,j,wid)]*kernel[pos(i-x+anchor,j-y+anchor,knl_size)];
 
-            avg/=(double)(knl_size*knl_size);
-
-            for (i=0;i<knl_size;i++) for (j=0;j<knl_size;j++) temp=avg-ipt[pos(x+i,y+j,ipt_wid)],mse+=temp*temp;
-
-            mse/=(double)(knl_size*knl_size);
-
-            mse=sqrt(mse);
-
-            opt[pos(x,y,opt_wid)]=mse;
+            opt[pos(x,y,wid)]=res;
         }
     }
 
-    __global__ void get_linear_regression(double *opt, const double *ipt, const unsigned int knl_size, const unsigned int ipt_wid, const unsigned int ipt_hei)
+    __global__ void square_mean(double *opt, const double *ipt1, const double *ipt2, const unsigned int wid, const unsigned int hei)
     {
-        unsigned int x = threadIdx.x + blockIdx.x * blockDim.x, y = threadIdx.y + blockIdx.y * blockDim.y, i,j;
-        const unsigned int opt_wid=ipt_wid-knl_size+1,opt_hei=ipt_hei-knl_size+1,anchor=kernel_size/2;
-        if (x<(opt_wid)&&y<(opt_hei)) {
-
-            double sum_x=0.,sum_y=0.;
-
-            for (i=0;i<knl_size;i++) for (j=0;j<knl_size;j++) {
-                sum_x+=(x+i-anchor)*ipt[pos(x+i,y+j,ipt_wid)];
-                sum_y+=(y+j-anchor)*ipt[pos(x+i,y+j,ipt_wid)];
-            }
-
-            double k=sum_y/sum_x,base=sqrt(1.+(k*k)),mse;
-
-            for (i=0;i<knl_size;i++) for (j=0;j<knl_size;j++) {
-
-            }
-
-            opt[pos(x,y,opt_wid)]=sum;
+        int x = threadIdx.x + blockIdx.x * blockDim.x, y = threadIdx.y + blockIdx.y * blockDim.y;
+        if (x<wid && y<hei){/*
+            int p=pos(x,y,wid);
+            opt[p]=sqrt(ipt1[p]*ipt1[p]+ipt2[p]*ipt2[p]);*/
         }
     }
 }
